@@ -1,26 +1,35 @@
 import os
 import time
 import json
+import logging
+import schedule
 import threading
 from pathlib import Path
 from shutil import move
 from datetime import datetime
 from tkinter import (
     Tk, filedialog, messagebox, IntVar, Entry, Label, Button,
-    Checkbutton, Frame, Listbox, Scrollbar, END
+    Checkbutton, Frame, Listbox, Scrollbar, SINGLE, END
 )
-from flask import Flask, request, jsonify
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
-import schedule
 
-app = Flask(__name__)
+# -------------------- File and Config Paths --------------------
+def choose_folder():
+    root = Tk()
+    root.withdraw()
+    folder = filedialog.askdirectory(title="Choose folder to watch")
+    if not folder:
+        messagebox.showwarning("No folder", "No folder selected. Exiting.")
+        exit()
+    return Path(folder)
 
-WATCHED_FOLDER = None
-SETTINGS_PATH = None
-USER_SETTINGS_PATH = None
-LOG_FILE = None
+WATCHED_FOLDER = choose_folder()
+SETTINGS_PATH = WATCHED_FOLDER / "settings.json"
+USER_SETTINGS_PATH = WATCHED_FOLDER / "user_settings.json"
+LOG_FILE = WATCHED_FOLDER / "file_organizer_log.txt"
 
+# -------------------- Default Settings --------------------
 DEFAULT_TARGET_DIRS = {
     "PDFs": [".pdf"],
     "Images": [".jpg", ".jpeg", ".png", ".gif"],
@@ -35,20 +44,7 @@ DEFAULT_USER_SETTINGS = {
     "delete_after_days": 30
 }
 
-TARGET_DIRS = {}
-USER_SETTINGS = {}
-
-def choose_folder():
-    folder_picker = Tk()
-    folder_picker.withdraw()
-    folder = filedialog.askdirectory(title="📁 Choose folder to watch")
-    folder_picker.destroy()
-    
-    if not folder:
-        messagebox.showwarning("No folder", "No folder selected. Exiting.")
-        exit()
-    return Path(folder)
-
+# -------------------- Settings Load/Save --------------------
 def load_rules():
     if not SETTINGS_PATH.exists():
         with open(SETTINGS_PATH, "w") as f:
@@ -71,17 +67,19 @@ def save_user_settings(settings):
     with open(USER_SETTINGS_PATH, "w") as f:
         json.dump(settings, f, indent=4)
 
-def launch_gui():
+# -------------------- Unified GUI --------------------
+def launch_unified_gui(rules, user_settings):
     def refresh_listbox():
         listbox.delete(0, END)
-        for folder, extensions in TARGET_DIRS.items():
-            listbox.insert(END, f"{folder}: {', '.join(extensions)}")
+        for folder, extensions in rules.items():
+            ext_string = ", ".join(extensions)
+            listbox.insert(END, f"{folder}: {ext_string}")
 
     def add_category():
         folder = folder_entry.get().strip()
         exts = [e.strip() for e in ext_entry.get().split(",") if e.strip()]
         if folder and exts:
-            TARGET_DIRS[folder] = exts
+            rules[folder] = exts
             refresh_listbox()
             folder_entry.delete(0, END)
             ext_entry.delete(0, END)
@@ -90,221 +88,175 @@ def launch_gui():
         selection = listbox.curselection()
         if selection:
             key = listbox.get(selection[0]).split(":")[0]
-            TARGET_DIRS.pop(key, None)
+            rules.pop(key, None)
             refresh_listbox()
 
     def save_and_close():
-        save_rules(TARGET_DIRS)
-        USER_SETTINGS["scheduler_enabled"] = bool(scheduler_var.get())
-        USER_SETTINGS["scheduler_interval_hours"] = int(scheduler_entry.get())
-        USER_SETTINGS["auto_delete_enabled"] = bool(delete_var.get())
-        USER_SETTINGS["delete_after_days"] = int(delete_entry.get())
-        save_user_settings(USER_SETTINGS)
+        save_rules(rules)
+        user_settings["scheduler_enabled"] = bool(scheduler_var.get())
+        user_settings["scheduler_interval_hours"] = int(scheduler_entry.get())
+        user_settings["auto_delete_enabled"] = bool(delete_var.get())
+        user_settings["delete_after_days"] = int(delete_entry.get())
+        save_user_settings(user_settings)
 
         messagebox.showinfo(
             "Organizer Running",
-            "✅ Organizer is now running.\n\n📌 You can minimize this window.\n🛑 To stop: press Ctrl+C in the terminal."
+            "✅ File Organizer is now running in the background.\n\nYou can minimize this terminal.\nPress Ctrl+C to stop."
         )
+        print("✔ Organizer is now running in the background.")
         gui.destroy()
 
     gui = Tk()
     gui.title("File Organizer Setup")
-    gui.attributes("-topmost", True)  # 👈 Make window stay on top
-    gui.after(500, lambda: gui.attributes("-topmost", False))  # 👈 Revert after it's shown
 
-
-    Label(gui, text="📁 Folder").grid(row=0, column=0)
+    Label(gui, text="📁 Folder Name").grid(row=0, column=0, sticky="w", padx=5, pady=2)
     folder_entry = Entry(gui)
-    folder_entry.grid(row=0, column=1)
+    folder_entry.grid(row=0, column=1, padx=5, pady=2)
 
-    Label(gui, text="Extensions (.pdf, .jpg)").grid(row=1, column=0)
+    Label(gui, text="➕ Extensions (.pdf, .jpg, ...)").grid(row=1, column=0, sticky="w", padx=5, pady=2)
     ext_entry = Entry(gui)
-    ext_entry.grid(row=1, column=1)
+    ext_entry.grid(row=1, column=1, padx=5, pady=2)
 
-    Button(gui, text="Add / Update", command=add_category).grid(row=2, column=0, columnspan=2)
+    Button(gui, text="Add / Update", command=add_category).grid(row=2, column=0, columnspan=2, pady=5)
 
     list_frame = Frame(gui)
-    list_frame.grid(row=3, column=0, columnspan=2)
+    list_frame.grid(row=3, column=0, columnspan=2, padx=5, pady=5)
     scrollbar = Scrollbar(list_frame)
-    listbox = Listbox(list_frame, height=10, width=50, yscrollcommand=scrollbar.set)
+    listbox = Listbox(list_frame, width=50, height=6, yscrollcommand=scrollbar.set, selectmode=SINGLE)
     scrollbar.config(command=listbox.yview)
     scrollbar.pack(side="right", fill="y")
     listbox.pack()
 
     refresh_listbox()
 
-    Button(gui, text="Remove Selected", command=remove_category).grid(row=4, column=0, columnspan=2, pady=5)
+    Button(gui, text="❌ Remove Selected", command=remove_category).grid(row=4, column=0, pady=5)
 
-    scheduler_var = IntVar(value=int(USER_SETTINGS["scheduler_enabled"]))
-    delete_var = IntVar(value=int(USER_SETTINGS["auto_delete_enabled"]))
+    scheduler_var = IntVar(value=int(user_settings["scheduler_enabled"]))
+    delete_var = IntVar(value=int(user_settings["auto_delete_enabled"]))
 
-    Label(gui, text="Scheduler Enabled").grid(row=5, column=0)
+    Label(gui, text="⏱ Scheduler Enabled").grid(row=5, column=0, sticky="w", padx=5)
     Checkbutton(gui, variable=scheduler_var).grid(row=5, column=1)
 
-    Label(gui, text="Interval (hours)").grid(row=6, column=0)
+    Label(gui, text="Interval (hours)").grid(row=6, column=0, sticky="w", padx=5)
     scheduler_entry = Entry(gui)
-    scheduler_entry.insert(0, str(USER_SETTINGS["scheduler_interval_hours"]))
-    scheduler_entry.grid(row=6, column=1)
+    scheduler_entry.insert(0, str(user_settings["scheduler_interval_hours"]))
+    scheduler_entry.grid(row=6, column=1, padx=5, pady=2)
 
-    Label(gui, text="Auto-Delete Enabled").grid(row=7, column=0)
+    Label(gui, text="🧹 Auto-Delete Enabled").grid(row=7, column=0, sticky="w", padx=5)
     Checkbutton(gui, variable=delete_var).grid(row=7, column=1)
 
-    Label(gui, text="Delete after (days)").grid(row=8, column=0)
+    Label(gui, text="Delete after (days)").grid(row=8, column=0, sticky="w", padx=5)
     delete_entry = Entry(gui)
-    delete_entry.insert(0, str(USER_SETTINGS["delete_after_days"]))
-    delete_entry.grid(row=8, column=1)
+    delete_entry.insert(0, str(user_settings["delete_after_days"]))
+    delete_entry.grid(row=8, column=1, padx=5, pady=2)
 
-    Button(gui, text="✅ Save & Start", command=save_and_close).grid(row=9, column=0, columnspan=2, pady=10)
+    Button(gui, text="✅ Save & Start Organizer", command=save_and_close).grid(row=9, column=0, columnspan=2, pady=10)
     gui.mainloop()
 
-class FileOrganizerHandler(FileSystemEventHandler):
-    def on_modified(self, event):
-        for file in WATCHED_FOLDER.iterdir():
-            if file.is_file():
-                for folder, extensions in TARGET_DIRS.items():
-                    if file.suffix.lower() in extensions:
-                        target_dir = WATCHED_FOLDER / folder
-                        target_dir.mkdir(exist_ok=True)
-                        target_path = target_dir / file.name
-
-                        counter = 1
-                        while target_path.exists():
-                            target_path = target_dir / f"{file.stem}({counter}){file.suffix}"
-                            counter += 1
-
-                        move(str(file), str(target_path))
-                        log_action(f"Moved {file.name} → {folder}")
-                        break
-
-def log_action(text):
-    with open(LOG_FILE, "a", encoding="utf-8") as log:
-        log.write(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] {text}\n")
-
-
-def delete_old_files():
-    days = USER_SETTINGS["delete_after_days"]
-    cutoff = time.time() - days * 86400
-    for folder in WATCHED_FOLDER.iterdir():
-        if folder.is_dir():
-            for file in folder.iterdir():
-                if file.is_file() and file.stat().st_mtime < cutoff:
-                    log_action(f"Auto-deleted: {file}")
-                    file.unlink()
-
-def run_scheduled_tasks():
-    while True:
-        if USER_SETTINGS["scheduler_enabled"]:
-            schedule.run_pending()
-        time.sleep(1)
-
-def start_scheduler():
-    schedule.every(USER_SETTINGS["scheduler_interval_hours"]).hours.do(initial_sort)
-    if USER_SETTINGS["auto_delete_enabled"]:
-        schedule.every(USER_SETTINGS["scheduler_interval_hours"]).hours.do(delete_old_files)
-    threading.Thread(target=run_scheduled_tasks, daemon=True).start()
+# -------------------- File Handling Logic --------------------
+logging.basicConfig(
+    filename=LOG_FILE,
+    level=logging.INFO,
+    format="%(asctime)s - %(levelname)s - %(message)s"
+)
 
 def ensure_folders_exist():
     for folder in TARGET_DIRS.keys():
         (WATCHED_FOLDER / folder).mkdir(exist_ok=True)
 
+def get_unique_filename(dest_path: Path) -> Path:
+    if not dest_path.exists():
+        return dest_path
+    base = dest_path.stem
+    ext = dest_path.suffix
+    counter = 1
+    while True:
+        new_path = dest_path.parent / f"{base}({counter}){ext}"
+        if not new_path.exists():
+            return new_path
+        counter += 1
+
+def move_file(file_path: Path):
+    extension = file_path.suffix.lower()
+    for folder, extensions in TARGET_DIRS.items():
+        if extension in extensions:
+            dest_folder = WATCHED_FOLDER / folder
+            dest_path = get_unique_filename(dest_folder / file_path.name)
+            move(str(file_path), str(dest_path))
+            logging.info(f"Moved '{file_path.name}' to '{dest_folder.name}'")
+            return
+    logging.info(f"Left '{file_path.name}' (no matching rule)")
+
+def clean_old_files(days_old):
+    cutoff = time.time() - (days_old * 86400)
+    for folder in WATCHED_FOLDER.iterdir():
+        if folder.is_dir():
+            for file in folder.iterdir():
+                if file.is_file() and file.stat().st_mtime < cutoff:
+                    try:
+                        logging.info(f"[AUTO-DELETE] Deleting: {file.name} (last modified: {datetime.fromtimestamp(file.stat().st_mtime)})")
+                        file.unlink()
+                    except Exception as e:
+                        logging.error(f"Failed to delete {file.name}: {e}")
+
 def initial_sort():
-    ensure_folders_exist()
-    for file in WATCHED_FOLDER.iterdir():
-        if file.is_file():
-            for folder, extensions in TARGET_DIRS.items():
-                if file.suffix.lower() in extensions:
-                    target_dir = WATCHED_FOLDER / folder
-                    target_dir.mkdir(exist_ok=True)
-                    target_path = target_dir / file.name
-                    counter = 1
-                    while target_path.exists():
-                        target_path = target_dir / f"{file.stem}({counter}){file.suffix}"
-                        counter += 1
-                    move(str(file), str(target_path))
-                    log_action(f"Initial Sort: {file.name} → {folder}")
-                    break
+    for item in WATCHED_FOLDER.iterdir():
+        if item.is_file() and item.name != LOG_FILE.name:
+            move_file(item)
 
-observer = None
+class FileOrganizerHandler(FileSystemEventHandler):
+    def on_created(self, event):
+        if not event.is_directory:
+            move_file(Path(event.src_path))
 
-@app.route("/settings", methods=["GET"])
-def get_settings():
-    return jsonify(load_rules())
+def run_scheduled_tasks():
+    settings = load_user_settings()
+    if not settings["scheduler_enabled"]:
+        logging.info("Scheduler is disabled by user.")
+        return
 
-@app.route("/settings", methods=["POST"])
-def update_settings():
-    new_rules = request.get_json()
-    save_rules(new_rules)
-    return jsonify({"status": "updated"})
+    logging.info(f"Scheduler enabled: Every {settings['scheduler_interval_hours']} hours")
 
-@app.route("/user-settings", methods=["GET"])
-def get_user_settings():
-    return jsonify(load_user_settings())
-
-@app.route("/user-settings", methods=["POST"])
-def update_user_settings_api():
-    settings = request.get_json()
-    save_user_settings(settings)
-    return jsonify({"status": "updated"})
-
-@app.route("/log", methods=["GET"])
-def get_log():
-    try:
-        with open(LOG_FILE, "r") as f:
-            lines = f.readlines()[-100:]
-        return jsonify({"log": "".join(lines)})
-    except Exception as e:
-        return jsonify({"error": str(e)})
-
-@app.route("/start", methods=["POST"])
-def start_watching():
-    global observer
-    if observer is None or not observer.is_alive():
-        observer = Observer()
-        observer.schedule(FileOrganizerHandler(), str(WATCHED_FOLDER), recursive=False)
-        observer.start()
-        return jsonify({"status": "started"})
+    if settings["auto_delete_enabled"]:
+        schedule.every(settings["scheduler_interval_hours"]).hours.do(
+            clean_old_files, days_old=settings["delete_after_days"]
+        )
+        logging.info(f"Auto-delete enabled: Files older than {settings['delete_after_days']} days")
     else:
-        return jsonify({"status": "already running"})
+        logging.info("Auto-delete is disabled by user.")
 
-@app.route("/stop", methods=["POST"])
-def stop_watching():
-    global observer
-    if observer:
-        observer.stop()
-        observer.join()
-        observer = None
-    return jsonify({"status": "stopped"})
+    while True:
+        schedule.run_pending()
+        time.sleep(10)
 
+# -------------------- MAIN --------------------
 if __name__ == "__main__":
-    WATCHED_FOLDER = choose_folder()
-    SETTINGS_PATH = WATCHED_FOLDER / "settings.json"
-    USER_SETTINGS_PATH = WATCHED_FOLDER / "user_settings.json"
-    LOG_FILE = WATCHED_FOLDER / "file_organizer_log.txt"
+    rules = load_rules()
+    user_settings = load_user_settings()
+
+    try:
+        launch_unified_gui(rules, user_settings)
+    except KeyboardInterrupt:
+        print("\nProgram closed with Ctrl+C")
+        exit()
 
     TARGET_DIRS = load_rules()
-    USER_SETTINGS = load_user_settings()
-
-    launch_gui()
     ensure_folders_exist()
     initial_sort()
-    start_scheduler()
+
+    threading.Thread(target=run_scheduled_tasks, daemon=True).start()
 
     observer = Observer()
     observer.schedule(FileOrganizerHandler(), str(WATCHED_FOLDER), recursive=False)
     observer.start()
 
-    threading.Thread(target=lambda: app.run(port=5000), daemon=True).start()
-
-    print("\n✅ Organizer is running in the background...")
-    print(f"👀 Watching: {WATCHED_FOLDER}")
-    print("🌐 Flask API running at: http://localhost:5000")
-    print("🛑 Press Ctrl+C in this terminal to stop.\n")
-
     try:
+        print(f"Watching {WATCHED_FOLDER}... Press Ctrl+C to stop.")
         while True:
             time.sleep(1)
     except KeyboardInterrupt:
         observer.stop()
         print("Stopped watching.")
     observer.join()
+
 #python 1.py
