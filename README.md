@@ -27,7 +27,7 @@ pip install watchdog schedule
 1. **Download the script**
    ```bash
    #clone the repository
-   git clone <repository-url>
+   git clone https://github.com/ikj23/File-Handling.git
    cd File-Handling
    cd main
    ```
