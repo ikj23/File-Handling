@@ -4,15 +4,15 @@ A lightweight, intelligent file management system that automatically organizes f
 
 ✨ Features
 
-- 🔍 Real-time File Monitoring**: Automatically detects and organizes new files as they're created
-- 🎛️ Simple GUI Configuration**: Easy-to-use interface for setting up file organization rules
-- 📅 Scheduled Cleanup**: Periodically removes old files at configurable intervals
-- 🗑️ Auto-cleanup**: Automatically deletes files older than specified days
-- 📝 Comprehensive Logging**: Detailed logs of all file operations with timestamps
-- ⚙️ Customizable Rules**: Define your own file categories and extensions
-- 🔄 Smart Duplicate Handling**: Intelligent renaming for files with duplicate names
-- 💾 Persistent Settings**: Saves your preferences across sessions
-- ⚡ Lightweight**: No external dependencies beyond standard Python libraries
+- **🔍 Real-time File Monitoring**: Automatically detects and organizes new files as they're created
+- **🎛️ Simple GUI Configuration**: Easy-to-use interface for setting up file organization rules
+- **📅 Scheduled Cleanup**: Periodically removes old files at configurable intervals
+- **🗑️ Auto-cleanup**: Automatically deletes files older than specified days
+- **📝 Comprehensive Logging**: Detailed logs of all file operations with timestamps
+- **⚙️ Customizable Rules**: Define your own file categories and extensions
+- **🔄 Smart Duplicate Handling**: Intelligent renaming for files with duplicate names
+- **💾 Persistent Settings**: Saves your preferences across sessions
+- **⚡ Lightweight**: No external dependencies beyond standard Python libraries
 
 🚀 Quick Start
 
