@@ -307,3 +307,4 @@ if __name__ == "__main__":
         observer.stop()
         print("Stopped watching.")
     observer.join()
+#python 1.py
